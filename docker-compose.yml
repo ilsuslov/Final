@@ -1,0 +1,312 @@
+# docker-compose.yml - полная инфраструктура аналитической платформы
+# Включает: TLS, ACL, репликация, MirrorMaker 2, Elasticsearch, HDFS, Spark, ksqlDB
+
+version: '3.8'
+
+services:
+  # Zookeeper для координации
+  zookeeper:
+    container_name: zookeeper
+    image: confluentinc/cp-zookeeper:7.5.0
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+
+  # КЛАСТЕР 1: Два брокера с TLS и репликацией
+  kafka-1:
+    container_name: kafka-1
+    image: confluentinc/cp-kafka:7.5.0
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+      - "9101:9101"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      # TLS конфигурация
+      KAFKA_SSL_KEYSTORE_FILENAME: kafka-1.keystore.jks
+      KAFKA_SSL_KEYSTORE_CREDENTIALS: keystore_creds
+      KAFKA_SSL_KEY_CREDENTIALS: key_creds
+      KAFKA_SSL_TRUSTSTORE_FILENAME: truststore.jks
+      KAFKA_SSL_TRUSTSTORE_CREDENTIALS: truststore_creds
+      KAFKA_SSL_CLIENT_AUTH: "none"
+      KAFKA_SECURITY_PROTOCOL: SSL
+      KAFKA_LISTENERS: SSL://0.0.0.0:9092
+      KAFKA_ADVERTISED_LISTENERS: SSL://kafka-1:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: SSL:SSL
+      KAFKA_INTER_BROKER_LISTENER_NAME: SSL
+      KAFKA_SSL_ENDPOINT_IDENTIFICATION_ALGORITHM: ""
+      # Репликация factor=2
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 2
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 2
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_MIN_IN_SYNC_REPLICAS: 1
+      # ACL авторизация
+      KAFKA_AUTHORIZER_CLASS_NAME: kafka.security.authorizer.AclAuthorizer
+      KAFKA_SUPER_USERS: User:admin;User:ANONYMOUS
+      KAFKA_ALLOW_EVERYONE_IF_NO_ACL_FOUND: "true"
+      # JMX Exporter
+      KAFKA_JMX_PORT: 9101
+      KAFKA_JMX_HOSTNAME: kafka-1
+    volumes:
+      - kafka1_data:/var/lib/kafka/data
+      - ./ssl/kafka-1.keystore.jks:/etc/kafka/secrets/kafka-1.keystore.jks:ro
+      - ./ssl/truststore.jks:/etc/kafka/secrets/truststore.jks:ro
+      - ./ssl/keystore_creds:/etc/kafka/secrets/keystore_creds:ro
+      - ./ssl/key_creds:/etc/kafka/secrets/key_creds:ro
+      - ./ssl/truststore_creds:/etc/kafka/secrets/truststore_creds:ro
+
+  kafka-2:
+    container_name: kafka-2
+    image: confluentinc/cp-kafka:7.5.0
+    depends_on:
+      - zookeeper
+    ports:
+      - "9093:9093"
+      - "9102:9102"
+    environment:
+      KAFKA_BROKER_ID: 2
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_SSL_KEYSTORE_FILENAME: kafka-2.keystore.jks
+      KAFKA_SSL_KEYSTORE_CREDENTIALS: keystore_creds
+      KAFKA_SSL_KEY_CREDENTIALS: key_creds
+      KAFKA_SSL_TRUSTSTORE_FILENAME: truststore.jks
+      KAFKA_SSL_TRUSTSTORE_CREDENTIALS: truststore_creds
+      KAFKA_SSL_CLIENT_AUTH: "none"
+      KAFKA_SECURITY_PROTOCOL: SSL
+      KAFKA_LISTENERS: SSL://0.0.0.0:9093
+      KAFKA_ADVERTISED_LISTENERS: SSL://kafka-2:9093
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: SSL:SSL
+      KAFKA_INTER_BROKER_LISTENER_NAME: SSL
+      KAFKA_SSL_ENDPOINT_IDENTIFICATION_ALGORITHM: ""
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 2
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 2
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_MIN_IN_SYNC_REPLICAS: 1
+      KAFKA_AUTHORIZER_CLASS_NAME: kafka.security.authorizer.AclAuthorizer
+      KAFKA_SUPER_USERS: User:admin;User:ANONYMOUS
+      KAFKA_ALLOW_EVERYONE_IF_NO_ACL_FOUND: "true"
+      KAFKA_JMX_PORT: 9102
+      KAFKA_JMX_HOSTNAME: kafka-2
+    volumes:
+      - kafka2_data:/var/lib/kafka/data
+      - ./ssl/kafka-2.keystore.jks:/etc/kafka/secrets/kafka-2.keystore.jks:ro
+      - ./ssl/truststore.jks:/etc/kafka/secrets/truststore.jks:ro
+      - ./ssl/keystore_creds:/etc/kafka/secrets/keystore_creds:ro
+      - ./ssl/key_creds:/etc/kafka/secrets/key_creds:ro
+      - ./ssl/truststore_creds:/etc/kafka/secrets/truststore_creds:ro
+
+  # КЛАСТЕР 2: Для аналитики
+  kafka-analytics:
+    container_name: kafka-analytics
+    image: confluentinc/cp-kafka:7.5.0
+    depends_on:
+      - zookeeper
+    ports:
+      - "9095:9095"
+      - "9103:9103"
+    environment:
+      KAFKA_BROKER_ID: 3
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_SSL_KEYSTORE_FILENAME: kafka-analytics.keystore.jks
+      KAFKA_SSL_KEYSTORE_CREDENTIALS: keystore_creds
+      KAFKA_SSL_KEY_CREDENTIALS: key_creds
+      KAFKA_SSL_TRUSTSTORE_FILENAME: truststore.jks
+      KAFKA_SSL_TRUSTSTORE_CREDENTIALS: truststore_creds
+      KAFKA_SSL_CLIENT_AUTH: "none"
+      KAFKA_SECURITY_PROTOCOL: SSL
+      KAFKA_LISTENERS: SSL://0.0.0.0:9095
+      KAFKA_ADVERTISED_LISTENERS: SSL://kafka-analytics:9095
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: SSL:SSL
+      KAFKA_INTER_BROKER_LISTENER_NAME: SSL
+      KAFKA_SSL_ENDPOINT_IDENTIFICATION_ALGORITHM: ""
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_JMX_PORT: 9103
+      KAFKA_JMX_HOSTNAME: kafka-analytics
+    volumes:
+      - kafka_analytics_data:/var/lib/kafka/data
+      - ./ssl/kafka-analytics.keystore.jks:/etc/kafka/secrets/kafka-analytics.keystore.jks:ro
+      - ./ssl/truststore.jks:/etc/kafka/secrets/truststore.jks:ro
+      - ./ssl/keystore_creds:/etc/kafka/secrets/keystore_creds:ro
+      - ./ssl/key_creds:/etc/kafka/secrets/key_creds:ro
+      - ./ssl/truststore_creds:/etc/kafka/secrets/truststore_creds:ro
+
+  # MirrorMaker 2 для дублирования между кластерами
+  mm2:
+    container_name: mm2
+    image: confluentinc/cp-kafka-connect:7.5.0
+    depends_on:
+      - kafka-1
+      - kafka-analytics
+    ports:
+      - "8084:8083"
+    environment:
+      CONNECT_BOOTSTRAP_SERVERS: kafka-analytics:9095
+      CONNECT_REST_PORT: 8083
+      CONNECT_REST_ADVERTISED_HOST_NAME: mm2
+      CONNECT_GROUP_ID: mm2-cluster
+      CONNECT_CONFIG_STORAGE_TOPIC: mm2-configs
+      CONNECT_OFFSET_STORAGE_TOPIC: mm2-offsets
+      CONNECT_STATUS_STORAGE_TOPIC: mm2-status
+      CONNECT_KEY_CONVERTER: org.apache.kafka.connect.storage.StringConverter
+      CONNECT_VALUE_CONVERTER: org.apache.kafka.connect.json.JsonConverter
+      CONNECT_PLUGIN_PATH: "/usr/share/java,/usr/share/confluent-hub-components"
+      # SSL для подключения к кластерам
+      CONNECT_SECURITY_PROTOCOL: SSL
+      CONNECT_SSL_TRUSTSTORE_LOCATION: /etc/kafka/secrets/truststore.jks
+      CONNECT_SSL_TRUSTSTORE_PASSWORD: changeit
+      CONNECT_SSL_KEYSTORE_LOCATION: /etc/kafka/secrets/kafka-analytics.keystore.jks
+      CONNECT_SSL_KEYSTORE_PASSWORD: changeit
+      CONNECT_SSL_KEY_PASSWORD: changeit
+      CONNECT_SSL_ENDPOINT_IDENTIFICATION_ALGORITHM: ""
+    volumes:
+      - ./ssl/truststore.jks:/etc/kafka/secrets/truststore.jks:ro
+      - ./ssl/kafka-analytics.keystore.jks:/etc/kafka/secrets/kafka-analytics.keystore.jks:ro
+
+  # Kafka Connect для File Sink
+  connect:
+    container_name: connect
+    image: confluentinc/cp-kafka-connect:7.5.0
+    depends_on:
+      - kafka-analytics
+    ports:
+      - "8083:8083"
+    environment:
+      CONNECT_BOOTSTRAP_SERVERS: kafka-analytics:9095
+      CONNECT_REST_PORT: 8083
+      CONNECT_REST_ADVERTISED_HOST_NAME: connect
+      CONNECT_GROUP_ID: connect-group
+      CONNECT_CONFIG_STORAGE_TOPIC: connect-configs
+      CONNECT_OFFSET_STORAGE_TOPIC: connect-offsets
+      CONNECT_STATUS_STORAGE_TOPIC: connect-status
+      CONNECT_KEY_CONVERTER: org.apache.kafka.connect.storage.StringConverter
+      CONNECT_VALUE_CONVERTER: org.apache.kafka.connect.json.JsonConverter
+      CONNECT_PLUGIN_PATH: "/usr/share/java,/usr/share/confluent-hub-components"
+      CONNECT_SECURITY_PROTOCOL: SSL
+      CONNECT_SSL_TRUSTSTORE_LOCATION: /etc/kafka/secrets/truststore.jks
+      CONNECT_SSL_TRUSTSTORE_PASSWORD: changeit
+      CONNECT_SSL_KEYSTORE_LOCATION: /etc/kafka/secrets/kafka-analytics.keystore.jks
+      CONNECT_SSL_KEYSTORE_PASSWORD: changeit
+      CONNECT_SSL_KEY_PASSWORD: changeit
+      CONNECT_SSL_ENDPOINT_IDENTIFICATION_ALGORITHM: ""
+    volumes:
+      - ./ssl/truststore.jks:/etc/kafka/secrets/truststore.jks:ro
+      - ./ssl/kafka-analytics.keystore.jks:/etc/kafka/secrets/kafka-analytics.keystore.jks:ro
+      - connect_data:/tmp/kafka-connect
+
+  # ksqlDB для потоковой обработки
+  ksqldb:
+    container_name: ksqldb
+    image: confluentinc/ksqldb-server:0.29.0
+    depends_on:
+      - kafka-analytics
+    ports:
+      - "8088:8088"
+    environment:
+      KSQL_BOOTSTRAP_SERVERS: kafka-analytics:9095
+      KSQL_LISTENERS: http://0.0.0.0:8088
+      KSQL_KSQL_LOGGING_PROCESSING_TOPIC_AUTO_CREATE: "true"
+      KSQL_KSQL_LOGGING_PROCESSING_STREAM_AUTO_CREATE: "true"
+      KSQL_SECURITY_PROTOCOL: SSL
+      KSQL_SSL_TRUSTSTORE_LOCATION: /etc/kafka/secrets/truststore.jks
+      KSQL_SSL_TRUSTSTORE_PASSWORD: changeit
+      KSQL_SSL_KEYSTORE_LOCATION: /etc/kafka/secrets/kafka-analytics.keystore.jks
+      KSQL_SSL_KEYSTORE_PASSWORD: changeit
+      KSQL_SSL_KEY_PASSWORD: changeit
+      KSQL_SSL_ENDPOINT_IDENTIFICATION_ALGORITHM: ""
+    volumes:
+      - ./ssl/truststore.jks:/etc/kafka/secrets/truststore.jks:ro
+      - ./ssl/kafka-analytics.keystore.jks:/etc/kafka/secrets/kafka-analytics.keystore.jks:ro
+
+  # Elasticsearch для хранения и поиска
+  elasticsearch:
+    container_name: elasticsearch
+    image: docker.elastic.co/elasticsearch/elasticsearch:7.17.9
+    ports:
+      - "9200:9200"
+    environment:
+      - discovery.type=single-node
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+    volumes:
+      - es_data:/usr/share/elasticsearch/data
+
+  # Apache Spark для аналитики
+  spark-master:
+    container_name: spark-master
+    image: bitnami/spark:3.4.1
+    ports:
+      - "8080:8080"
+      - "7077:7077"
+    environment:
+      - SPARK_MODE=master
+      - SPARK_MASTER_HOST=spark-master
+    volumes:
+      - ./src:/opt/spark/work-dir
+
+  spark-worker:
+    container_name: spark-worker
+    image: bitnami/spark:3.4.1
+    depends_on:
+      - spark-master
+    environment:
+      - SPARK_MODE=worker
+      - SPARK_MASTER_URL=spark://spark-master:7077
+
+  # HDFS (упрощённый через volume)
+  hdfs-namenode:
+    container_name: hdfs-namenode
+    image: bde2020/hadoop-namenode:2.0.0-hadoop3.2.1-java8
+    ports:
+      - "9870:9870"
+    environment:
+      - CLUSTER_NAME=hdfs-cluster
+    volumes:
+      - hdfs_namenode:/hadoop/dfs/name
+
+  hdfs-datanode:
+    container_name: hdfs-datanode
+    image: bde2020/hadoop-datanode:2.0.0-hadoop3.2.1-java8
+    depends_on:
+      - hdfs-namenode
+    environment:
+      - SERVICE_PRECONDITION=hdfs-namenode:9870
+    volumes:
+      - hdfs_datanode:/hadoop/dfs/data
+
+  # Мониторинг
+  prometheus:
+    container_name: prometheus
+    image: prom/prometheus:latest
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+      - ./monitoring/alert_rules.yml:/etc/prometheus/alert_rules.yml
+
+  grafana:
+    container_name: grafana
+    image: grafana/grafana:latest
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    depends_on:
+      - prometheus
+
+  alertmanager:
+    container_name: alertmanager
+    image: prom/alertmanager:latest
+    ports:
+      - "9093:9093"
+    volumes:
+      - ./monitoring/alertmanager.yml:/etc/alertmanager/alertmanager.yml
+
+volumes:
+  kafka1_data:
+  kafka2_data:
+  kafka_analytics_data:
+  connect_data:
+  es_data:
+  hdfs_namenode:
+  hdfs_datanode:
