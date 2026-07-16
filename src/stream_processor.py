@@ -1,30 +1,44 @@
+# stream_processor.py - Faust с TLS
+# Фильтрует запрещенные товары
+
+import faust
 import json
-from confluent_kafka import Consumer, Producer
 
-def main():
-    with open('../data/banned.json', 'r', encoding='utf-8') as f:
-        banned = set(json.load(f))
+app = faust.App(
+    'stream-processor',
+    broker='kafka://localhost:9092',
+    value_serializer='raw',
+    # TLS конфигурация для Faust
+    broker_credentials=faust.SSL(
+        cafile='../ssl/ca.crt',
+        certfile='../ssl/client.crt',
+        keyfile='../ssl/client.key'
+    )
+)
 
-    consumer = Consumer({'bootstrap.servers': 'localhost:9092', 'group.id': 'filter-group', 'auto.offset.reset': 'earliest'})
-    producer = Producer({'bootstrap.servers': 'localhost:9092'})
-    consumer.subscribe(['products-raw'])
+with open('../data/banned.json', 'r', encoding='utf-8') as f:
+    BANNED_CATEGORIES = set(json.load(f))
 
-    print(f"🛡️ [Stream Processor] Запущен. Категории в черном списке: {banned}")
-    try:
-        while True:
-            msg = consumer.poll(1.0)
-            if not msg or msg.error(): continue
-            data = json.loads(msg.value().decode('utf-8'))
-            
-            if data.get('category') in banned:
-                print(f"🚫 [Stream Processor] ЗАБЛОКИРОВАНО: {data['name']} (Категория: {data['category']})")
-            else:
-                print(f"✅ [Stream Processor] ПРОПУЩЕНО: {data['name']} -> products-filtered")
-                producer.produce('products-filtered', key=msg.key(), value=msg.value())
-                producer.flush()
-    except KeyboardInterrupt:
-        print("\n⏹️ [Stream Processor] Остановлен.")
-        consumer.close()
+print(f"🛡️ [Stream Processor] Запрещенные категории: {BANNED_CATEGORIES}")
 
-if __name__ == "__main__":
-    main()
+products_raw = app.topic('products-raw')
+products_filtered = app.topic('products-filtered')
+
+
+@app.agent(products_raw)
+async def process_products(products):
+    async for product_bytes in products:
+        product = json.loads(product_bytes.decode('utf-8'))
+        category = product.get('category', '')
+        name = product.get('name', 'Unknown')
+        
+        if category in BANNED_CATEGORIES:
+            print(f"🚫 [Faust] ЗАБЛОКИРОВАНО: {name} ({category})")
+        else:
+            print(f"✅ [Faust] ПРОПУЩЕНО: {name} -> products-filtered")
+            await products_filtered.send(value=product_bytes)
+
+
+if __name__ == '__main__':
+    print("🛡️ [Stream Processor] Запуск Faust с TLS...")
+    app.main()
